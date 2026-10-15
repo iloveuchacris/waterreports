@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบเฝ้าระวังและแจ้งเตือนน้ำท่วมเรียลไทม์ (Flood Monitoring System)</title>
+    
+    <!-- Tailwind CSS (UI Framework) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS & JS (Interactive Map) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Font Awesome (Icons) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        #map { height: calc(100vh - 80px); width: 100%; z-index: 1; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-slate-100 font-sans flex flex-col h-screen overflow-hidden">
+
+    <!-- Header Navigation Bar -->
+    <header class="bg-blue-700 text-white shadow-lg h-20 px-6 flex justify-between items-center z-10 shrink-0">
+        <div class="flex items-center space-x-3">
+            <i class="fa-solid font-bold text-3xl fa-house-tsunami text-yellow-300"></i>
+            <div>
+                <h1 class="text-xl font-bold leading-tight">ระบบแจ้งเตือนระดับน้ำท่วมเรียลไทม์</h1>
+                <p class="text-xs text-blue-200">Real-time Flood Monitoring & Crowdsourcing Platform</p>
+            </div>
+        </div>
+        
+        <!-- Action Buttons -->
+        <div class="flex gap-3">
+            <button onclick="getCurrentLocation()" class="bg-blue-800 hover:bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 border border-blue-500">
+                <i class="fa-solid fa-location-crosshairs text-yellow-400"></i> ตำแหน่งของฉัน
+            </button>
+            <button onclick="openReportModal()" class="bg-red-500 hover:bg-red-600 text-white px-5 py-2 rounded-lg text-sm font-bold shadow-md transition flex items-center gap-2 animate-pulse">
+                <i class="fa-solid fa-circle-exclamation"></i> แจ้งระดับน้ำท่วม
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <div class="flex flex-1 overflow-hidden relative">
+        
+        <!-- Map Container -->
+        <div class="flex-1 relative">
+            <div id="map"></div>
+            
+            <!-- Map Legend (คำอธิบายสีหมุด) -->
+            <div class="absolute bottom-5 left-5 bg-white/95 backdrop-blur-sm p-4 rounded-xl shadow-xl z-[1000] border border-slate-200 text-xs flex flex-col gap-2">
+                <span class="font-bold text-slate-700 text-sm mb-1">สัญลักษณ์ระดับน้ำ:</span>
+                <div class="flex items-center gap-2"><span class="w-3.5 h-3.5 rounded-full bg-green-500 inline-block border border-white shadow-sm"></span> ปกติ / น้ำแห้ง</div>
+                <div class="flex items-center gap-2"><span class="w-3.5 h-3.5 rounded-full bg-yellow-400 inline-block border border-white shadow-sm"></span> เฝ้าระวัง (ปริ่มขอบทาง)</div>
+                <div class="flex items-center gap-2"><span class="w-3.5 h-3.5 rounded-full bg-orange-500 inline-block border border-white shadow-sm"></span> ท่วมขังเล็กน้อย (ข้อเท้า-เข่า)</div>
+                <div class="flex items-center gap-2"><span class="w-3.5 h-3.5 rounded-full bg-red-600 inline-block border border-white shadow-sm"></span> วิกฤต (เอว / รถเล็กผ่านไม่ได้)</div>
+            </div>
+        </div>
+
+        <!-- Sidebar: Feeds & Search Panel -->
+        <aside class="w-96 bg-white border-l border-slate-200 flex flex-col h-full shadow-lg z-10">
+            <!-- Search & Filter Bar -->
+            <div class="p-4 border-b border-slate-100 bg-slate-50 space-y-3">
+                <div class="relative">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-slate-400 text-sm"></i>
+                    <input type="text" id="searchInput" oninput="filterReports()" placeholder="ค้นหาพื้นที่ หรือสถานที่..." class="w-full pl-9 pr-4 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="flex justify-between items-center text-xs text-slate-500">
+                    <span id="reportCount" class="font-semibold text-blue-600">กำลังเชื่อมต่อฐานข้อมูล...</span>
+                    <span>Realtime DB</span>
+                </div>
+            </div>
+
+            <!-- List of Reports -->
+            <div id="reportsList" class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                <!-- Cards will be populated dynamically from Database -->
+            </div>
+        </aside>
+
+    </div>
+
+    <!-- Modal: Form แจ้งระดับน้ำ -->
+    <div id="reportModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden z-[2000] flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden flex flex-col max-h-[90vh]">
+            
+            <div class="bg-blue-700 text-white px-6 py-4 flex justify-between items-center">
+                <h3 class="font-bold text-lg flex items-center gap-2">
+                    <i class="fa-solid fa-triangle-exclamation text-yellow-300"></i> รายงานสถานการณ์น้ำท่วม
+                </h3>
+                <button onclick="closeReportModal()" class="text-blue-200 hover:text-white text-xl font-bold">&times;</button>
+            </div>
+
+            <form id="waterReportForm" onsubmit="handleFormSubmit(event)" class="p-6 overflow-y-auto space-y-4 custom-scrollbar text-sm">
+                
+                <!-- ระดับน้ำ -->
+                <div>
+                    <label class="block font-semibold text-slate-700 mb-2">ระดับน้ำ <span class="text-red-500">*</span></label>
+                    <select id="waterLevel" required class="w-full p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option value="1">🟢 ปกติ / น้ำแห้งแล้ว</option>
+                        <option value="2">🟡 เฝ้าระวัง (น้ำปริ่มขอบทาง)</option>
+                        <option value="3">🟠 ท่วมขังเล็กน้อย (ระดับข้อเท้า - เข่า)</option>
+                        <option value="4">🔴 วิกฤต (ระดับเอวขึ้นไป / รถเล็กผ่านไม่ได้)</option>
+                    </select>
+                </div>
+
+                <!-- ชื่อผู้แจ้ง -->
+                <div>
+                    <label class="block font-semibold text-slate-700 mb-1">ชื่อผู้แจ้ง / อาสาสมัคร</label>
+                    <input type="text" id="reporterName" placeholder="เช่น คุณสมชาย" class="w-full p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+
+                <!-- พิกัดและที่อยู่ -->
+                <div>
+                    <label class="block font-semibold text-slate-700 mb-1">สถานที่ / จุดสังเกต <span class="text-red-500">*</span></label>
+                    <input type="text" id="locationName" required placeholder="เช่น หน้าตลาดสดเทศบาล ซอย 5" class="w-full p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">ละติจูด (Lat)</label>
+                        <input type="number" step="any" id="latInput" required readonly class="w-full p-2 bg-slate-100 border border-slate-300 rounded text-xs">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">ลองจิจูด (Lng)</label>
+                        <input type="number" step="any" id="lngInput" required readonly class="w-full p-2 bg-slate-100 border border-slate-300 rounded text-xs">
+                    </div>
+                </div>
+                <button type="button" onclick="useCurrentLocationForForm()" class="text-xs text-blue-600 hover:underline flex items-center gap-1">
+                    <i class="fa-solid fa-crosshairs"></i> ใช้ตำแหน่งปัจจุบันของฉัน
+                </button>
+
+                <!-- รายละเอียดเพิ่มเติม -->
+                <div>
+                    <label class="block font-semibold text-slate-700 mb-1">รายละเอียดเพิ่มเติม</label>
+                    <textarea id="description" rows="3" placeholder="ระบุข้อมูลเพิ่มเติม เช่น รถเล็กสัญจรไม่ได้..." class="w-full p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
+                </div>
+
+                <!-- รูปภาพ (URL) -->
+                <div>
+                    <label class="block font-semibold text-slate-700 mb-1">ลิงก์รูปภาพประกอบ (URL)</label>
+                    <input type="url" id="imageUrl" placeholder="https://example.com/image.jpg" class="w-full p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+
+                <div class="pt-4 flex gap-3">
+                    <button type="button" onclick="closeReportModal()" class="w-1/2 py-2.5 border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50 font-semibold">ยกเลิก</button>
+                    <button type="submit" class="w-1/2 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold shadow">บันทึกลงฐานข้อมูล</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Supabase JS Client SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <script>
+        // -----------------------------------------------------------------
+        // 1. SUPABASE CONFIG (ใส่ URL และ Anon Key ของคุณจาก Supabase Dashboard)
+        // -----------------------------------------------------------------
+        const SUPABASE_URL = "https://pmjilafkytdxbrnczagm.supabase.co";
+        const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBtamlsYWZreXRkeGJybmN6YWdtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwNzE4NTcsImV4cCI6MjEwNzY0Nzg1N30.Bt1glF0Tgc-FLOfhavwuyUeYWjWWUeUw8cyD6uHSo88";
+
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // -----------------------------------------------------------------
+        // 2. INITIALIZE MAP (แผนที่)
+        // -----------------------------------------------------------------
+        const defaultLat = 13.7563;
+        const defaultLng = 100.5018;
+        const map = L.map('map').setView([defaultLat, defaultLng], 11);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        let markersGroup = L.layerGroup().addTo(map);
+        let reportsData = [];
+
+        // -----------------------------------------------------------------
+        // 3. REAL-TIME DATA FETCHING (ดึงข้อมูลจาก Supabase 100%)
+        // -----------------------------------------------------------------
+        async function initDataListener() {
+            await fetchReports();
+
+            // ตั้งค่า Realtime Subscription: เมื่อมีข้อมูลใหม่เพิ่มใน DB จะอัปเดตหน้าจอทันที
+            supabaseClient
+                .channel('public:water_reports')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'water_reports' }, payload => {
+                    fetchReports();
+                })
+                .subscribe();
+        }
+
+        async function fetchReports() {
+            const { data, error } = await supabaseClient
+                .from('water_reports')
+                .select('*')
+                .order('created_at', { ascending: false });
+
+            if (error) {
+                console.error("Supabase Fetch Error:", error);
+                document.getElementById('reportCount').innerText = "เชื่อมต่อฐานข้อมูลไม่สำเร็จ";
+                return;
+            }
+
+            reportsData = (data || []).map(item => ({
+                id: item.id,
+                locationName: item.location_name,
+                waterLevel: item.water_level,
+                description: item.description,
+                lat: item.lat,
+                lng: item.lng,
+                imageUrl: item.image_url,
+                reporterName: item.reporter_name || 'ไม่ระบุชื่อ',
+                timestamp: new Date(item.created_at)
+            }));
+            renderUI();
+        }
+
+        // -----------------------------------------------------------------
+        // 4. RENDER UI & MAP MARKERS
+        // -----------------------------------------------------------------
+        function renderUI() {
+            markersGroup.clearLayers();
+            const listContainer = document.getElementById('reportsList');
+            listContainer.innerHTML = '';
+
+            const filteredData = getFilteredData();
+            document.getElementById('reportCount').innerText = `พบข้อมูล ${filteredData.length} รายการในระบบ`;
+
+            if (filteredData.length === 0) {
+                listContainer.innerHTML = `
+                    <div class="text-center text-slate-400 py-12 px-4">
+                        <i class="fa-solid fa-database text-4xl mb-3 text-slate-300"></i>
+                        <p class="text-sm font-semibold text-slate-600">ยังไม่มีข้อมูลในฐานข้อมูล</p>
+                        <p class="text-xs text-slate-400 mt-1">คลิกปุ่ม <span class="text-red-500 font-bold">"แจ้งระดับน้ำท่วม"</span> ด้านบน หรือคลิกบนแผนที่เพื่อเพิ่มข้อมูลแรก</p>
+                    </div>`;
+                return;
+            }
+
+            filteredData.forEach(item => {
+                const color = getWaterLevelColor(item.waterLevel);
+                const circleMarker = L.circleMarker([item.lat, item.lng], {
+                    radius: 10,
+                    fillColor: color,
+                    color: '#ffffff',
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.9
+                }).addTo(markersGroup);
+
+                circleMarker.bindPopup(`
+                    <div class="p-1 font-sans">
+                        <span class="inline-block px-2 py-0.5 text-xs text-white rounded font-bold mb-1" style="background-color: ${color}">
+                            ${getWaterLevelText(item.waterLevel)}
+                        </span>
+                        <h4 class="font-bold text-sm text-slate-800">${item.locationName}</h4>
+                        <p class="text-xs text-slate-600 mt-1">${item.description || '-'}</p>
+                        ${item.imageUrl ? `<img src="${item.imageUrl}" class="mt-2 rounded w-full h-28 object-cover">` : ''}
+                        <div class="flex justify-between items-center text-[10px] text-slate-400 mt-2 border-t pt-1">
+                            <span><i class="fa-solid fa-user"></i> ${item.reporterName}</span>
+                            <span>${formatTime(item.timestamp)}</span>
+                        </div>
+                    </div>
+                `);
+
+                const card = document.createElement('div');
+                card.className = "bg-white p-4 rounded-xl border border-slate-200 hover:border-blue-400 transition shadow-sm cursor-pointer hover:shadow-md";
+                card.onclick = () => focusOnMap(item.lat, item.lng);
+                
+                card.innerHTML = `
+                    <div class="flex justify-between items-start gap-2 mb-2">
+                        <h4 class="font-bold text-slate-800 text-sm leading-snug">${item.locationName}</h4>
+                        <span class="shrink-0 px-2.5 py-0.5 text-[11px] text-white font-bold rounded-full" style="background-color: ${color}">
+                            ${getWaterLevelText(item.waterLevel)}
+                        </span>
+                    </div>
+                    <p class="text-xs text-slate-600 line-clamp-2 mb-2">${item.description || 'ไม่มีรายละเอียดเพิ่มเติม'}</p>
+                    ${item.imageUrl ? `<img src="${item.imageUrl}" class="rounded-lg w-full h-32 object-cover mb-2">` : ''}
+                    <div class="flex justify-between items-center text-[10px] text-slate-400 border-t pt-2 border-slate-100">
+                        <span><i class="fa-solid fa-user-circle"></i> ${item.reporterName}</span>
+                        <span><i class="fa-regular fa-clock"></i> ${formatTime(item.timestamp)}</span>
+                    </div>
+                `;
+                listContainer.appendChild(card);
+            });
+        }
+
+        // -----------------------------------------------------------------
+        // 5. HELPER FUNCTIONS
+        // -----------------------------------------------------------------
+        function getWaterLevelColor(level) {
+            switch (parseInt(level)) {
+                case 1: return '#22c55e';
+                case 2: return '#eab308';
+                case 3: return '#f97316';
+                case 4: return '#dc2626';
+                default: return '#64748b';
+            }
+        }
+
+        function getWaterLevelText(level) {
+            switch (parseInt(level)) {
+                case 1: return 'ปกติ';
+                case 2: return 'เฝ้าระวัง';
+                case 3: return 'ท่วมขังเล็กน้อย';
+                case 4: return 'วิกฤต';
+                default: return 'ไม่ระบุ';
+            }
+        }
+
+        function formatTime(date) {
+            if (!date) return '';
+            return new Date(date).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
+        }
+
+        function focusOnMap(lat, lng) {
+            map.setView([lat, lng], 15, { animate: true });
+        }
+
+        function filterReports() {
+            renderUI();
+        }
+
+        function getFilteredData() {
+            const query = document.getElementById('searchInput').value.toLowerCase();
+            return reportsData.filter(item => 
+                item.locationName.toLowerCase().includes(query) || 
+                (item.description && item.description.toLowerCase().includes(query)) ||
+                item.reporterName.toLowerCase().includes(query)
+            );
+        }
+
+        // -----------------------------------------------------------------
+        // 6. LOCATION & FORM HANDLING
+        // -----------------------------------------------------------------
+        function getCurrentLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+                        map.setView([lat, lng], 15);
+                        
+                        L.popup()
+                            .setLatLng([lat, lng])
+                            .setContent('<div class="font-bold text-xs">📍 ตำแหน่งปัจจุบันของคุณ</div>')
+                            .openOn(map);
+                    },
+                    () => alert("ไม่สามารถดึงตำแหน่งปัจจุบันของคุณได้ กรุณาเปิด GPS")
+                );
+            } else {
+                alert("เบราว์เซอร์ของคุณไม่รองรับการระบุตำแหน่ง GPS");
+            }
+        }
+
+        function useCurrentLocationForForm() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition((position) => {
+                    document.getElementById('latInput').value = position.coords.latitude.toFixed(6);
+                    document.getElementById('lngInput').value = position.coords.longitude.toFixed(6);
+                });
+            }
+        }
+
+        function openReportModal() {
+            document.getElementById('reportModal').classList.remove('hidden');
+            const center = map.getCenter();
+            document.getElementById('latInput').value = center.lat.toFixed(6);
+            document.getElementById('lngInput').value = center.lng.toFixed(6);
+        }
+
+        function closeReportModal() {
+            document.getElementById('reportModal').classList.add('hidden');
+            document.getElementById('waterReportForm').reset();
+        }
+
+        map.on('click', function(e) {
+            document.getElementById('latInput').value = e.latlng.lat.toFixed(6);
+            document.getElementById('lngInput').value = e.latlng.lng.toFixed(6);
+            openReportModal();
+        });
+
+        // -----------------------------------------------------------------
+        // 7. INSERT DATA TO SUPABASE (บันทึกลง Database จริง)
+        // -----------------------------------------------------------------
+        async function handleFormSubmit(e) {
+            e.preventDefault();
+
+            const reporterInput = document.getElementById('reporterName').value.trim();
+            const newReport = {
+                location_name: document.getElementById('locationName').value,
+                water_level: parseInt(document.getElementById('waterLevel').value),
+                description: document.getElementById('description').value,
+                lat: parseFloat(document.getElementById('latInput').value),
+                lng: parseFloat(document.getElementById('lngInput').value),
+                image_url: document.getElementById('imageUrl').value,
+                reporter_name: reporterInput !== "" ? reporterInput : "ไม่ระบุชื่อ",
+                status: "approved"
+            };
+
+            const { error } = await supabaseClient.from('water_reports').insert([newReport]);
+            
+            if (error) {
+                console.error("Supabase Insert Error: ", error);
+                alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล: " + error.message);
+            } else {
+                alert("บันทึกข้อมูลลงฐานข้อมูลเรียลไทม์สำเร็จ!");
+                closeReportModal();
+            }
+        }
+
+        // เริ่มต้นโหลดข้อมูล
+        initDataListener();
+    </script>
+</body>
+</html>
